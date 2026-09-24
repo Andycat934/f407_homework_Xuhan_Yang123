@@ -11,7 +11,7 @@
             "request": "launch",
             "servertype": "openocd",
             "cwd": "${workspaceFolder}",
-            "executable": "${workspaceFolder}/build/Debug/stm32f407vgt6.elf", //TODO:改为真实.elf
+            "executable": "${workspaceFolder}/build/Debug/board.elf", //TODO:改为真实.elf
             "preLaunchTask": "cmake-build-debug",
             "configFiles": [
                 "interface/cmsis-dap.cfg",
@@ -35,7 +35,7 @@
             "request": "launch",
             "servertype": "openocd",
             "cwd": "${workspaceFolder}",
-            "executable": "${workspaceFolder}/build/Debug/stm32f407vgt6.elf",
+            "executable": "${workspaceFolder}/build/Debug/board.elf",
             "preLaunchTask": "cmake-build-debug",
             "configFiles": [
                 "interface/stlink.cfg",
