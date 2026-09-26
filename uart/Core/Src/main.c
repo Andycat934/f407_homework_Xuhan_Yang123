@@ -18,12 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "tim.h"
-#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,20 +36,23 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-/* USER CODE BEGIN Includes */
-uint16_t pwm_val = 0;    // 定义亮度值
-int8_t pwm_dir = 1;      // 定义方向
-/* USER CODE END Includes */
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-
+uint8_t rx_byte;
+uint8_t rx_buffer[20];
+uint8_t rx_index = 0;
+uint8_t rx_data[2]; // 用于接收电脑发来的指令
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -90,39 +91,24 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_TIM9_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
+  uint8_t receiveData[2]; 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  {
-
-    /* USER CODE END WHILE */
-
+  { /*HAL_UART_Transmit(&huart1, (uint8_t *)message, strlen(message), 100);
+  HAL_Delay(1000);*/
+ 
     /* USER CODE BEGIN 3 */
-
-  
-   
-
-    pwm_val += pwm_dir * 5;
-
-// 2. 边界检测（碰到最亮或最暗就反向）
-    if (pwm_val >= 1000) {
-        pwm_val = 1000;
-        pwm_dir = -1;         // 到达最亮，开始变暗
-    }
-    else if (pwm_val <= 0) {
-        pwm_val = 0;
-        pwm_dir = 1;     // 到达最暗，开始变亮
-    }
-
-    __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, pwm_val);
-
-// 4. 延时（决定呼吸速度）
-    HAL_Delay(5); 
+   HAL_UART_Receive(&huart1, receiveData, 2, HAL_MAX_DELAY); // 接收电脑发来的指令
+  HAL_UART_Transmit(&huart1, receiveData, 2, 1000); // 将接收到的指令原样返回给电脑
+  GPIO_PinState state = GPIO_PIN_SET; // 默认状态为高电平
+  if (receiveData[1] == '0') {state = GPIO_PIN_RESET;} // 如果接收到的指令
+  if (receiveData[0] == 'R') {HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, state);} // 如果接收到的指令
+  else if (receiveData[0] == 'G') {HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, state);} // 如果接收到的指令
   /* USER CODE END 3 */
   }
 }
@@ -172,6 +158,71 @@ void SystemClock_Config(void)
   }
 }
 
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5|GPIO_PIN_6, GPIO_PIN_SET);
+
+  /*Configure GPIO pins : PE5 PE6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
+}
+
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
@@ -195,7 +246,7 @@ void Error_Handler(void)
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
   * @param  file: pointer to the source file name
-  * @param  line: assert_param error source line number
+  * @param  line: assert_param error line source number
   * @retval None
   */
 void assert_failed(uint8_t *file, uint32_t line)
