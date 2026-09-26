@@ -1,0 +1,211 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file    can.c
+  * @brief   This file provides code for the configuration
+  *          of the CAN instances.
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "can.h"
+
+/* USER CODE BEGIN 0 */
+/*
+ * C610 电调 CAN 协议（数值全部来自《C610 无刷电机调速器使用说明》第 6~8 页）
+ *
+ * 控制帧（电调接收）：
+ *   标识符 0x200 -> 控制 ID 1~4 号电调
+ *   标识符 0x1FF -> 控制 ID 5~8 号电调
+ *   帧类型：标准帧   帧格式：DATA   DLC：8 字节
+ *   DATA[0..1] = ID1 的控制转矩电流值（高 8 位在前，即大端 int16）
+ *   DATA[2..3] = ID2   DATA[4..5] = ID3   DATA[6..7] = ID4
+ *   取值范围 -10000~10000，对应电调输出转矩电流 -10~10A
+ *
+ * 反馈帧（电调向上发）：
+ *   标识符 = 0x200 + 电调 ID（ID=1 -> 0x201），标准帧 DATA，DLC 8，默认 1kHz
+ *   DATA[0..1] 转子机械角度 0~8191（对应 0~360°）
+ *   DATA[2..3] 转子转速（rpm）
+ *   DATA[4..5] 实际转矩电流
+ *   DATA[6]    空
+ *   DATA[7]    电机错误码：0 无异常 / 2 供电电压过高 / 3 三相线未接入
+ *                           / 4 位置传感器数据丢失 / 6 堵转 / 7 校准失败
+ *
+ * 波特率 1Mbps：APB1 = 42 MHz，Prescaler=3，BS1=10TQ，BS2=3TQ
+ *   42 MHz / (3 * (1 + 10 + 3) TQ) = 1.000 Mbps
+ */
+
+/* 收到过多少帧电调反馈：用来让绿灯以肉眼看得见的速度闪 */
+static uint32_t rx_frame_cnt = 0;
+/* USER CODE END 0 */
+
+CAN_HandleTypeDef hcan1;
+
+/* CAN1 init function */
+void MX_CAN1_Init(void)
+{
+
+  /* USER CODE BEGIN CAN1_Init 0 */
+
+  /* USER CODE END CAN1_Init 0 */
+
+  /* USER CODE BEGIN CAN1_Init 1 */
+
+  /* USER CODE END CAN1_Init 1 */
+  hcan1.Instance = CAN1;
+  hcan1.Init.Prescaler = 3;
+  hcan1.Init.Mode = CAN_MODE_NORMAL;         /* 正常模式：帧真的发到总线上；SILENT_LOOPBACK 只在片内自环，电机收不到 */
+  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_10TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_3TQ;
+  hcan1.Init.TimeTriggeredMode = DISABLE;
+  hcan1.Init.AutoBusOff = DISABLE;
+  hcan1.Init.AutoWakeUp = DISABLE;
+  hcan1.Init.AutoRetransmission = ENABLE;    /* 发失败自动重发，控制帧不容易丢 */
+  hcan1.Init.ReceiveFifoLocked = DISABLE;    /* FIFO 满了让新帧覆盖最旧帧（默认行为） */
+  hcan1.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN1_Init 2 */
+  /* 过滤器：掩码全 0 => 任何 ID 都放行，并且都丢进 FIFO0（回调是 RxFifo0 版本） */
+  CAN_FilterTypeDef can_filter_st = {0};
+  can_filter_st.FilterActivation = ENABLE;
+  can_filter_st.FilterMode = CAN_FILTERMODE_IDMASK;
+  can_filter_st.FilterScale = CAN_FILTERSCALE_32BIT;
+  can_filter_st.FilterIdHigh = 0x0000;
+  can_filter_st.FilterIdLow = 0x0000;
+  can_filter_st.FilterMaskIdHigh = 0x0000;
+  can_filter_st.FilterMaskIdLow = 0x0000;
+  can_filter_st.FilterBank = 0;              /* 第 0 组过滤器属于 CAN1 */
+  can_filter_st.FilterFIFOAssignment = CAN_RX_FIFO0;
+  can_filter_st.SlaveStartFilterBank = 14;   /* 0~13 归 CAN1，14~27 归 CAN2 */
+  if (HAL_CAN_ConfigFilter(&hcan1, &can_filter_st) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_CAN_Start(&hcan1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE END CAN1_Init 2 */
+
+}
+
+void HAL_CAN_MspInit(CAN_HandleTypeDef* canHandle)
+{
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  if(canHandle->Instance==CAN1)
+  {
+  /* USER CODE BEGIN CAN1_MspInit 0 */
+
+  /* USER CODE END CAN1_MspInit 0 */
+    /* CAN1 clock enable */
+    __HAL_RCC_CAN1_CLK_ENABLE();
+
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+    /**CAN1 GPIO Configuration
+    PD0     ------> CAN1_RX
+    PD1     ------> CAN1_TX
+    */
+    GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF9_CAN1;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+    /* CAN1 interrupt Init */
+    HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+  /* USER CODE BEGIN CAN1_MspInit 1 */
+
+  /* USER CODE END CAN1_MspInit 1 */
+  }
+}
+
+void HAL_CAN_MspDeInit(CAN_HandleTypeDef* canHandle)
+{
+
+  if(canHandle->Instance==CAN1)
+  {
+  /* USER CODE BEGIN CAN1_MspDeInit 0 */
+
+  /* USER CODE END CAN1_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_CAN1_CLK_DISABLE();
+
+    /**CAN1 GPIO Configuration
+    PD0     ------> CAN1_RX
+    PD1     ------> CAN1_TX
+    */
+    HAL_GPIO_DeInit(GPIOD, GPIO_PIN_0|GPIO_PIN_1);
+
+    /* CAN1 interrupt Deinit */
+    HAL_NVIC_DisableIRQ(CAN1_RX0_IRQn);
+  /* USER CODE BEGIN CAN1_MspDeInit 1 */
+
+  /* USER CODE END CAN1_MspDeInit 1 */
+  }
+}
+
+/* USER CODE BEGIN 1 */
+/**
+  * @brief  FIFO0 里有未读帧时，HAL_CAN_IRQHandler() 会调用这个弱函数（在 can.c 里重写）
+  * @note   中断里不要调用 Error_Handler()：它会 __disable_irq() 然后死循环
+  * @note   每次进中断都要把 FIFO0 读空，否则 pending 中断会一直有效，卡死主循环
+  */
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  CAN_RxHeaderTypeDef rx_header;
+  uint8_t rx_data[8];
+
+  while (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) > 0)
+  {
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rx_header, rx_data) != HAL_OK)
+    {
+      break;
+    }
+
+    /* 只关心自己这台电调的反馈帧：标识符 = 0x200 + 电调 ID */
+    if ((rx_header.IDE == CAN_ID_STD) &&
+        (rx_header.StdId == (C610_FEEDBACK_ID_BASE + MOTOR_ID)))
+    {
+      int16_t rotor_angle   = (int16_t)((rx_data[0] << 8) | rx_data[1]);  /* 0~8191 对应 0~360° */
+      int16_t rotor_speed   = (int16_t)((rx_data[2] << 8) | rx_data[3]);  /* rpm */
+      int16_t real_current  = (int16_t)((rx_data[4] << 8) | rx_data[5]);  /* 实际转矩电流 */
+      uint8_t motor_err     = rx_data[7];                                 /* 错误码 */
+
+      /* 这些量先留着：要看波形时接到 OLED / 串口 / 调试器 live watch 上 */
+      (void)rotor_angle;
+      (void)rotor_speed;
+      (void)real_current;
+      (void)motor_err;
+
+      /* 绿灯：反馈默认 1kHz，累计 500 帧翻转一次 ≈ 2Hz 的可见闪烁。
+         绿灯在闪 = CAN 通了、电调在回话；完全不闪 = 一帧反馈都没收到 */
+      if (++rx_frame_cnt >= 500u)
+      {
+        rx_frame_cnt = 0;
+        HAL_GPIO_TogglePin(LED_G_GPIO_Port, LED_G_Pin);
+      }
+    }
+  }
+}
+/* USER CODE END 1 */
